@@ -7,6 +7,10 @@ type State uint8
 const (
 	StateClientBanner = 1 << iota
 	StateServerBanner
+	StateClientKexInit
+	StateServerKexInit
+	StateClientKeyExchange
+	StateServerKeyExchange
 )
 
 func (s *State) Set(flag State) {

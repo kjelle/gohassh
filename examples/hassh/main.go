@@ -190,6 +190,9 @@ func (t *tcpStream) ReassembledSG(sg reassembly.ScatterGather, ac reassembly.Ass
 		t.sshSession.ClientPort = cp
 		t.sshSession.ServerIP = sip
 		t.sshSession.ServerPort = sp
+
+		info := sg.CaptureInfo(0)
+		t.sshSession.Timestamp = info.Timestamp
 		//		t.sshSession.
 		//		stream.tlsSession.SetNetwork(cip, sip, cp, sp)
 	}
@@ -201,70 +204,71 @@ func (t *tcpStream) ReassembledSG(sg reassembly.ScatterGather, ac reassembly.Ass
 		return
 	}
 	data := sg.Fetch(length)
-	if t.isTLS {
-		if length > 0 {
-			// We attempt to decode SSH
-			ssh := &essh.ESSH{}
-			var decoded []gopacket.LayerType
-			p := gopacket.NewDecodingLayerParser(essh.LayerTypeESSH, ssh)
-			p.DecodingLayerParserOptions.IgnoreUnsupported = true
-			err := p.DecodeLayers(data, &decoded)
-			if err != nil {
-				// If it's fragmented we keep for next round
-				sg.KeepFrom(0)
-			} else {
+	if length > 0 {
+		// We attempt to decode SSH
+		ssh := essh.NewESSH(
+			true,
+		)
+		var decoded []gopacket.LayerType
+		p := gopacket.NewDecodingLayerParser(essh.LayerTypeESSH, ssh)
+		p.DecodingLayerParserOptions.IgnoreUnsupported = true
+		err := p.DecodeLayers(data, &decoded)
+		if err != nil {
+			// If it's fragmented we keep for next round
+			sg.KeepFrom(0)
+		} else {
 
-				Debug("SSH(%s): %s\n", dir, gopacket.LayerDump(ssh))
-				//				Debug("SSH(%s): %s\n", dir, gopacket.LayerGoString(ssh))
+			Debug("SSH(%s): %s\n", dir, gopacket.LayerDump(ssh))
+			//				Debug("SSH(%s): %s\n", dir, gopacket.LayerGoString(ssh))
 
-				if ssh.Banner != nil {
-					if dir == reassembly.TCPDirClientToServer {
-						t.sshSession.ClientBanner(ssh.Banner)
-					} else {
-						t.sshSession.ServerBanner(ssh.Banner)
+			if ssh.Banner != nil {
+				if dir == reassembly.TCPDirClientToServer {
+					t.sshSession.ClientBanner(ssh.Banner)
+				} else {
+					t.sshSession.ServerBanner(ssh.Banner)
+					t.queueSession()
+				}
+			}
+
+		}
+		/*
+
+				if tls.Handshake != nil {
+
+					// If the timestamp has not been set, we set it for the first time.
+					if t.tlsSession.Record.Timestamp.IsZero() {
+						info := sg.CaptureInfo(0)
+						t.tlsSession.SetTimestamp(info.Timestamp)
+					}
+
+					for _, tlsrecord := range tls.Handshake {
+						switch tlsrecord.ETLSHandshakeMsgType {
+						// Client Hello
+						case 1:
+							t.tlsSession.PopulateClientHello(tlsrecord.ETLSHandshakeClientHello)
+							t.tlsSession.D4Fingerprinting("ja3")
+						// Server Hello
+						case 2:
+							t.tlsSession.PopulateServerHello(tlsrecord.ETLSHandshakeServerHello)
+							t.tlsSession.D4Fingerprinting("ja3s")
+						// Server Certificate
+						case 11:
+							t.tlsSession.PopulateCertificate(tlsrecord.ETLSHandshakeCertificate)
+							t.tlsSession.D4Fingerprinting("tlsh")
+						}
+
+					}
+
+					// If the handshake is considered finished and we have not yet outputted it we ship it to output.
+					if t.tlsSession.HandshakeComplete() && !t.queued {
 						t.queueSession()
 					}
-				}
 
+				}
 			}
-			/*
-
-					if tls.Handshake != nil {
-
-						// If the timestamp has not been set, we set it for the first time.
-						if t.tlsSession.Record.Timestamp.IsZero() {
-							info := sg.CaptureInfo(0)
-							t.tlsSession.SetTimestamp(info.Timestamp)
-						}
-
-						for _, tlsrecord := range tls.Handshake {
-							switch tlsrecord.ETLSHandshakeMsgType {
-							// Client Hello
-							case 1:
-								t.tlsSession.PopulateClientHello(tlsrecord.ETLSHandshakeClientHello)
-								t.tlsSession.D4Fingerprinting("ja3")
-							// Server Hello
-							case 2:
-								t.tlsSession.PopulateServerHello(tlsrecord.ETLSHandshakeServerHello)
-								t.tlsSession.D4Fingerprinting("ja3s")
-							// Server Certificate
-							case 11:
-								t.tlsSession.PopulateCertificate(tlsrecord.ETLSHandshakeCertificate)
-								t.tlsSession.D4Fingerprinting("tlsh")
-							}
-
-						}
-
-						// If the handshake is considered finished and we have not yet outputted it we ship it to output.
-						if t.tlsSession.HandshakeComplete() && !t.queued {
-							t.queueSession()
-						}
-
-					}
-				}
-			*/
-		}
+		*/
 	}
+
 }
 
 func getIPPorts(t *tcpStream) (string, string, string, string) {

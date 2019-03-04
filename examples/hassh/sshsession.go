@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/kjelle/gohassh/essh"
@@ -30,6 +31,10 @@ func NewSSHSession(iface string) SSHSession {
 	}
 }
 
+func (s *SSHSession) BannersComplete() bool {
+	return s.state.Has(StateClientBanner) && s.state.Has(StateServerBanner)
+}
+
 func (s *SSHSession) ClientBanner(b *essh.ESSHBannerRecord) {
 	s.state.Set(StateClientBanner)
 	s.ESSHClientBanner = b
@@ -38,4 +43,15 @@ func (s *SSHSession) ClientBanner(b *essh.ESSHBannerRecord) {
 func (s *SSHSession) ServerBanner(b *essh.ESSHBannerRecord) {
 	s.state.Set(StateServerBanner)
 	s.ESSHServerBanner = b
+}
+
+func (s *SSHSession) MarshalJSON() ([]byte, error) {
+	type Alias SSHSession
+	return json.Marshal(&struct {
+		*Alias
+		Timestamp string `json:"timestamp"`
+	}{
+		Alias:     (*Alias)(s),
+		Timestamp: s.Timestamp.Format("2016"),
+	})
 }

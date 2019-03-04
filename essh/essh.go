@@ -1,6 +1,7 @@
 package essh
 
 import (
+	"encoding/binary"
 	"errors"
 
 	"github.com/google/gopacket"
@@ -12,9 +13,10 @@ var LayerTypeESSH gopacket.LayerType
 // ESSHType defines the type of data afdter the ESSH Record
 type ESSHType uint8
 
-// ESSHType known values.
+// ESSHType known values, possibly defined in RFC 4253, section 12.
 const (
-	ESSHBanner ESSHType = 53
+	ESSH_BANNER      ESSHType = 53
+	ESSH_MSG_KEXINIT ESSHType = 20 // SSH_MSG_KEXINIT
 )
 
 // String shows the register type nicely formatted
@@ -22,8 +24,10 @@ func (ss ESSHType) String() string {
 	switch ss {
 	default:
 		return "Unknown"
-	case ESSHBanner:
+	case ESSH_BANNER:
 		return "Banner"
+	case ESSH_MSG_KEXINIT:
+		return "Message Key Exchange Init"
 	}
 }
 
@@ -43,8 +47,38 @@ func (sv ESSHVersion) String() string {
 type ESSH struct {
 	layers.BaseLayer
 
+	decodeBanner bool
+
 	// ESSH Records
-	Banner *ESSHBannerRecord
+	Banner  *ESSHBannerRecord
+	Kexinit *ESSHKexinitRecord
+}
+
+// decodeFromBytes decodes the Binary Packet Protocol as specified by RFC 4253, section 6.
+//
+//   uint32     packet_length
+//   byte       padding_length
+//   byte       message code
+type ESSHRecordHeader struct {
+	PacketLength  uint32
+	PaddingLength uint8
+	MessageCode   ESSHType
+}
+
+func (h *ESSHRecordHeader) decodeFromBytes(data []byte, df gopacket.DecodeFeedback) error {
+	if len(data) < 6 {
+		return errors.New("ESSH invalid SSH header")
+	}
+	h.PacketLength = binary.BigEndian.Uint32(data[0:4])
+	h.PaddingLength = uint8(data[4:5][0])
+	h.MessageCode = ESSHType(uint8(data[5:6][0]))
+	return nil
+}
+
+func NewESSH(decb bool) *ESSH {
+	return &ESSH{
+		decodeBanner: decb,
+	}
 }
 
 func (s *ESSH) LayerType() gopacket.LayerType { return LayerTypeESSH }
@@ -79,15 +113,40 @@ func (s *ESSH) decodeESSHRecords(data []byte, df gopacket.DecodeFeedback) error 
 	// pointing to this layer
 	s.BaseLayer = layers.BaseLayer{Contents: data[:len(data)]}
 
-	tl := len(data)
+	if s.decodeBanner {
+		var r ESSHBannerRecord
+		e := r.decodeFromBytes(data, df)
+		if e == nil {
+			// Banner successful!
+			s.Banner = &r
+			return nil
+		}
+	}
 
-	// Try to decode the banner
-	var r ESSHBannerRecord
-	e := r.decodeFromBytes(data, df)
-	if e == nil {
-		// Banner successful!
-		s.Banner = &r
-		return nil
+	var h ESSHRecordHeader
+	e := h.decodeFromBytes(data, df)
+	if e != nil {
+		return e
+	}
+
+	hl := 6 // header length
+	tl := hl + int(h.PacketLength)
+	if len(data) < tl {
+		df.SetTruncated()
+		return errors.New("ESSH packet lengt mismatch")
+	}
+
+	switch h.MessageCode {
+	default:
+		return errors.New("Unknown ESSH message code")
+	case ESSH_MSG_KEXINIT:
+		var r ESSHKexinitRecord
+		e := r.decodeFromBytes(data, df)
+		if e == nil {
+			// Key Exchange successful!
+			s.Kexinit = &r
+			return nil
+		}
 	}
 
 	if len(data) == tl {
