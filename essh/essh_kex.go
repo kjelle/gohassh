@@ -46,16 +46,10 @@ const (
 )
 
 // decodeFromBytes decodes the Key Exchange (kex) as specified by RFC 4253, section 7.1.
-func (s *ESSHKexinitRecord) decodeFromBytes(data []byte, df gopacket.DecodeFeedback) error {
-	//	copy(s.Cookie[:], data[0:16])
-	bptr := uint32(16) // Skip cookie
-
-	fmt.Printf("data len: %d\n", len(data))
-	fmt.Printf("data: %02x\n", data)
-	fmt.Printf("cookie: %02x\n", data[0:16])
-	fmt.Printf("kexalgoslength: %02x\n", data[16:20])
-
+func (s *ESSHKexinitRecord) decodeFromBytes(data []byte, pad uint8, df gopacket.DecodeFeedback) error {
 	var l uint32
+	//fmt.Printf("cookie: %02x\n", data[0:16])
+	bptr := uint32(16) // Skip cookie
 
 	// kex_algorithms
 	l = binary.BigEndian.Uint32(data[bptr:(bptr + 4)])
@@ -138,6 +132,7 @@ func (s *ESSHKexinitRecord) decodeFromBytes(data []byte, df gopacket.DecodeFeedb
 	}
 
 	// first_kex_packet_follows
+	fmt.Printf("before/after followS: %02x\n", data[(bptr-9):(bptr+2)])
 	s.FirstKexFollows = data[bptr] != 0
 	bptr += 1
 
@@ -145,18 +140,10 @@ func (s *ESSHKexinitRecord) decodeFromBytes(data []byte, df gopacket.DecodeFeedb
 	bptr += 4
 
 	// Padding
-	fmt.Printf("Padding? %d\n", uint32(len(data))-bptr)
-
-	fmt.Printf("bptr: %d  len(data): %d\n", bptr, len(data))
-
-	fmt.Printf("KexAlgos: %s\n", s.KexAlgos)
-	fmt.Printf("server_hostkey_algorithms: %s\n", s.ServerHostKeyAlgos)
-	fmt.Printf("s.CiphersClientServer: %s\n", s.CiphersClientServer)
-	fmt.Printf("s.CiphersServerClient: %s\n", s.CiphersServerClient)
-	fmt.Printf("s.MACsClientServer: %s\n", s.MACsClientServer)
-	fmt.Printf("s.MACsServerClient: %s\n", s.MACsServerClient)
-	fmt.Printf("s.CompressionClientServer: %s\n", s.CompressionClientServer)
-	fmt.Printf("s.CompressionServerClient: %s\n", s.CompressionServerClient)
+	p := uint8(uint32(len(data)) - bptr)
+	if p != pad {
+		return fmt.Errorf("Misaligned padding, expected %d, got %d", pad, p)
+	}
 
 	return nil
 }

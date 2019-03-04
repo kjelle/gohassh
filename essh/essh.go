@@ -141,7 +141,7 @@ func (s *ESSH) decodeESSHRecords(data []byte, df gopacket.DecodeFeedback) error 
 		return errors.New("Unknown ESSH message code")
 	case ESSH_MSG_KEXINIT:
 		var r ESSHKexinitRecord
-		e := r.decodeFromBytes(data, df)
+		e := r.decodeFromBytes(data, h.PaddingLength, df)
 		if e == nil {
 			// Key Exchange successful!
 			s.Kexinit = &r
