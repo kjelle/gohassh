@@ -2,14 +2,14 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
+	"io"
+	"io/ioutil"
 	"net/http"
 	_ "net/http/pprof"
 
-	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
-	"io/ioutil"
 	"log"
 	"os"
 	"os/signal"
@@ -23,8 +23,7 @@ import (
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
 	"github.com/google/gopacket/reassembly"
-
-	"github.com/D4-project/sensor-d4-tls-fingerprinting/d4tls"
+	"github.com/kjelle/gohassh/essh"
 )
 
 var statsevery = flag.Int("stats", 100000, "Output statistics every N packets")
@@ -46,7 +45,7 @@ var jsonIndent = flag.Bool("jsonindent", true, "Write JSON with indent")
 var outCerts = flag.String("w", "", "Folder to write certificates into")
 var outJSON = flag.String("j", "", "Folder to write certificates into, stdin if not set")
 var outFilename = flag.String("f", "", "Output all captures to a single filename")
-var jobQ chan d4tls.TLSSession
+var jobQ chan SSHSession
 
 // debugging
 var pprofenabled = flag.Bool("pprof", false, "enabling net/http/pprof")
@@ -107,12 +106,8 @@ func (factory *tcpStreamFactory) New(net, transport gopacket.Flow, tcp *layers.T
 		tcpstate:   reassembly.NewTCPSimpleFSM(fsmOptions),
 		ident:      fmt.Sprintf("%s:%s", net, transport),
 		optchecker: reassembly.NewTCPOptionCheck(),
-		tlsSession: d4tls.TLSSession{},
+		sshSession: NewSSHSession(*iface),
 	}
-
-	// Set network information in the TLSSession
-	cip, sip, cp, sp := getIPPorts(stream)
-	stream.tlsSession.SetNetwork(cip, sip, cp, sp)
 
 	return stream
 }
@@ -146,7 +141,7 @@ type tcpStream struct {
 	reversed       bool
 	urls           []string
 	ident          string
-	tlsSession     d4tls.TLSSession
+	sshSession     SSHSession
 	queued         bool
 	ignorefsmerr   bool
 	nooptcheck     bool
@@ -185,8 +180,20 @@ func (t *tcpStream) Accept(tcp *layers.TCP, ci gopacket.CaptureInfo, dir reassem
 }
 
 func (t *tcpStream) ReassembledSG(sg reassembly.ScatterGather, ac reassembly.AssemblerContext) {
-	_, _, _, skip := sg.Info()
+	dir, _, _, skip := sg.Info()
 	length, _ := sg.Lengths()
+
+	if dir == reassembly.TCPDirClientToServer {
+		// Set network information in the TLSSession
+		cip, sip, cp, sp := getIPPorts(t)
+		t.sshSession.ClientIP = cip
+		t.sshSession.ClientPort = cp
+		t.sshSession.ServerIP = sip
+		t.sshSession.ServerPort = sp
+		//		t.sshSession.
+		//		stream.tlsSession.SetNetwork(cip, sip, cp, sp)
+	}
+
 	if skip == -1 {
 		// this is allowed
 	} else if skip != 0 {
@@ -197,23 +204,31 @@ func (t *tcpStream) ReassembledSG(sg reassembly.ScatterGather, ac reassembly.Ass
 	if t.isTLS {
 		if length > 0 {
 			// We attempt to decode SSH
-			ssh := &hassh. 
+			ssh := &essh.ESSH{}
+			var decoded []gopacket.LayerType
+			p := gopacket.NewDecodingLayerParser(essh.LayerTypeESSH, ssh)
+			p.DecodingLayerParserOptions.IgnoreUnsupported = true
+			err := p.DecodeLayers(data, &decoded)
+			if err != nil {
+				// If it's fragmented we keep for next round
+				sg.KeepFrom(0)
+			} else {
 
+				Debug("SSH(%s): %s\n", dir, gopacket.LayerDump(ssh))
+				//				Debug("SSH(%s): %s\n", dir, gopacket.LayerGoString(ssh))
 
+				if ssh.Banner != nil {
+					if dir == reassembly.TCPDirClientToServer {
+						t.sshSession.ClientBanner(ssh.Banner)
+					} else {
+						t.sshSession.ServerBanner(ssh.Banner)
+						t.queueSession()
+					}
+				}
+
+			}
 			/*
 
-				// We attempt to decode TLS
-				tls := &etls.ETLS{}
-				var decoded []gopacket.LayerType
-				p := gopacket.NewDecodingLayerParser(etls.LayerTypeETLS, tls)
-				p.DecodingLayerParserOptions.IgnoreUnsupported = true
-				err := p.DecodeLayers(data, &decoded)
-				if err != nil {
-					// If it's fragmented we keep for next round
-					sg.KeepFrom(0)
-				} else {
-					//Debug("TLS: %s\n", gopacket.LayerDump(tls))
-					//		Debug("TLS: %s\n", gopacket.LayerGoString(tls))
 					if tls.Handshake != nil {
 
 						// If the timestamp has not been set, we set it for the first time.
@@ -265,9 +280,9 @@ func getIPPorts(t *tcpStream) (string, string, string, string) {
 func (t *tcpStream) ReassemblyComplete(ac reassembly.AssemblerContext) bool {
 	// If the handshakre has not yet been outputted, but there are some information such as
 	// either the client hello or the server hello, we also output a partial.
-	if *partial && !t.queued && t.tlsSession.HandshakeAny() {
+	/*	if *partial && !t.queued && t.tlsSession.HandshakeAny() {
 		t.queueSession()
-	}
+	}*/
 
 	// remove connection from the pool
 	return true
@@ -333,7 +348,7 @@ func main() {
 	signal.Notify(signalChan, os.Interrupt)
 
 	// Job chan to hold Completed sessions to write
-	jobQ = make(chan d4tls.TLSSession, 4096)
+	jobQ = make(chan SSHSession, 4096)
 	cancelC := make(chan string)
 
 	// We start a worker to send the processed TLS connection the outside world
@@ -447,14 +462,14 @@ func main() {
 func (t *tcpStream) queueSession() bool {
 	t.queued = true
 	select {
-	case jobQ <- t.tlsSession:
+	case jobQ <- t.sshSession:
 		return true
 	default:
 		return false
 	}
 }
 
-func processCompletedSession(cancelC <-chan string, jobQ <-chan d4tls.TLSSession, w *sync.WaitGroup) {
+func processCompletedSession(cancelC <-chan string, jobQ <-chan SSHSession, w *sync.WaitGroup) {
 	for {
 		select {
 		case tlss, more := <-jobQ:
@@ -470,26 +485,12 @@ func processCompletedSession(cancelC <-chan string, jobQ <-chan d4tls.TLSSession
 	}
 }
 
-func output(t d4tls.TLSSession) {
+func output(t SSHSession) {
 	var jsonRecord []byte
 	if *jsonIndent {
-		jsonRecord, _ = json.MarshalIndent(t.Record, "", "    ")
+		jsonRecord, _ = json.MarshalIndent(t, "", "    ")
 	} else {
-		jsonRecord, _ = json.Marshal(t.Record)
-	}
-
-	// If an output folder was specified for certificates
-	if *outCerts != "" {
-		if _, err := os.Stat(fmt.Sprintf("./%s", *outCerts)); !os.IsNotExist(err) {
-			for _, certMe := range t.Record.Certificates {
-				err := ioutil.WriteFile(fmt.Sprintf("./%s/%s.crt", *outCerts, certMe.CertHash), certMe.Certificate.Raw, 0644)
-				if err != nil {
-					panic("Could not write to file.")
-				}
-			}
-		} else {
-			panic(fmt.Sprintf("./%s does not exist", *outCerts))
-		}
+		jsonRecord, _ = json.Marshal(t)
 	}
 
 	// If an output folder was specified for json files
@@ -497,7 +498,7 @@ func output(t d4tls.TLSSession) {
 		if _, err := os.Stat(fmt.Sprintf("./%s", *outJSON)); !os.IsNotExist(err) {
 			var err error
 			if len(*outFilename) < 1 {
-				err = ioutil.WriteFile(fmt.Sprintf("./%s/%s.json", *outJSON, t.Record.Timestamp.Format(time.RFC3339)), jsonRecord, 0644)
+				err = ioutil.WriteFile(fmt.Sprintf("./%s/%s.json", *outJSON, t.Timestamp.Format(time.RFC3339)), jsonRecord, 0644)
 			} else {
 
 				// First time, set the file descriptor
@@ -524,7 +525,8 @@ func output(t d4tls.TLSSession) {
 		if err != nil {
 			panic("Could not write to stdout.")
 		}
+		fmt.Println()
 	}
 
-	Debug(t.String())
+	//	Debug(t.String())
 }

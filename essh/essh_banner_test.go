@@ -11,8 +11,13 @@ var testBanner = map[string]struct {
 	proto_version    string
 	software_version string
 }{
-	"meh": {
+	"new format": {
 		data:             append([]byte("SSH-2.0-OpenSSH_7.4"), []byte{0x0d, 0x0a}...),
+		proto_version:    "2.0",
+		software_version: "OpenSSH_7.4",
+	},
+	"comments": {
+		data:             append([]byte("SSH-2.0-OpenSSH_7.4 some comment..."), []byte{0x0d, 0x0a}...),
 		proto_version:    "2.0",
 		software_version: "OpenSSH_7.4",
 	},

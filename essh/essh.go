@@ -44,7 +44,7 @@ type ESSH struct {
 	layers.BaseLayer
 
 	// ESSH Records
-	Banner ESSHBannerRecord
+	Banner *ESSHBannerRecord
 }
 
 func (s *ESSH) LayerType() gopacket.LayerType { return LayerTypeESSH }
@@ -86,7 +86,7 @@ func (s *ESSH) decodeESSHRecords(data []byte, df gopacket.DecodeFeedback) error 
 	e := r.decodeFromBytes(data, df)
 	if e == nil {
 		// Banner successful!
-		s.Banner = r
+		s.Banner = &r
 		return nil
 	}
 
