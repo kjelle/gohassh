@@ -29,7 +29,7 @@ import (
 var statsevery = flag.Int("stats", 100000, "Output statistics every N packets")
 var nodefrag = flag.Bool("nodefrag", false, "If true, do not do IPv4 defrag")
 var checksum = flag.Bool("checksum", false, "Check TCP checksum")
-var nooptcheck = flag.Bool("nooptcheck", false, "Do not check TCP options (useful to ignore MSS on captures with TSO)")
+var nooptcheck = flag.Bool("nooptcheck", true, "Do not check TCP options (useful to ignore MSS on captures with TSO)")
 var ignorefsmerr = flag.Bool("ignorefsmerr", false, "Ignore TCP FSM errors")
 var verbose = flag.Bool("verbose", false, "Be verbose")
 var debug = flag.Bool("debug", false, "Display debug information")
@@ -38,6 +38,7 @@ var partial = flag.Bool("partial", true, "Output partial TLS Sessions, e.g. wher
 
 // capture
 var iface = flag.String("i", "eth0", "Interface to read packets from")
+var snaplen = flag.Int("s", 65536, "Snap length (number of bytes max to read per packet")
 var fname = flag.String("r", "", "Filename to read from, overrides -i")
 
 // writing
@@ -60,6 +61,24 @@ var assemblerOptions = reassembly.AssemblerOptions{
 	MaxBufferedPagesTotal:         0, // unlimited
 }
 
+var stats struct {
+	ipdefrag            int
+	missedBytes         int
+	pkt                 int
+	sz                  int
+	totalsz             int
+	rejectFsm           int
+	rejectOpt           int
+	rejectConnFsm       int
+	reassembled         int
+	outOfOrderBytes     int
+	outOfOrderPackets   int
+	biggestChunkBytes   int
+	biggestChunkPackets int
+	overlapBytes        int
+	overlapPackets      int
+}
+
 var outputLevel int
 var errorsMap map[string]uint
 var errorsMapMutex sync.Mutex
@@ -76,6 +95,8 @@ func Error(t string, s string, a ...interface{}) {
 	if outputLevel >= 0 {
 		//fmt.Printf(s, a...)
 	}
+
+	//	fmt.Printf(s, a...)
 }
 func Info(s string, a ...interface{}) {
 	if outputLevel >= 1 {
@@ -102,7 +123,6 @@ func (factory *tcpStreamFactory) New(net, transport gopacket.Flow, tcp *layers.T
 	stream := &tcpStream{
 		net:        net,
 		transport:  transport,
-		isTLS:      true,
 		tcpstate:   reassembly.NewTCPSimpleFSM(fsmOptions),
 		ident:      fmt.Sprintf("%s:%s", net, transport),
 		optchecker: reassembly.NewTCPOptionCheck(),
@@ -137,7 +157,6 @@ type tcpStream struct {
 	fsmerr         bool
 	optchecker     reassembly.TCPOptionCheck
 	net, transport gopacket.Flow
-	isTLS          bool
 	reversed       bool
 	urls           []string
 	ident          string
@@ -152,82 +171,148 @@ type tcpStream struct {
 func (t *tcpStream) Accept(tcp *layers.TCP, ci gopacket.CaptureInfo, dir reassembly.TCPFlowDirection, nextSeq reassembly.Sequence, start *bool, ac reassembly.AssemblerContext) bool {
 	// FSM
 	if !t.tcpstate.CheckState(tcp, dir) {
+		Error("FSM", "%s: Packet rejected by FSM (state:%s)\n", t.ident, t.tcpstate.String())
+		stats.rejectFsm++
 		if !t.fsmerr {
 			t.fsmerr = true
+			stats.rejectConnFsm++
 		}
-		if !t.ignorefsmerr {
+		if !*ignorefsmerr {
 			return false
 		}
 	}
 	// Options
 	err := t.optchecker.Accept(tcp, ci, dir, nextSeq, start)
 	if err != nil {
-		if !t.nooptcheck {
+		Error("OptionChecker", "%s: Packet rejected by OptionChecker: %s\n", t.ident, err)
+		stats.rejectOpt++
+		if !*nooptcheck {
 			return false
 		}
 	}
 	// Checksum
 	accept := true
-	if t.checksum {
+	if *checksum {
 		c, err := tcp.ComputeChecksum()
 		if err != nil {
+			Error("ChecksumCompute", "%s: Got error computing checksum: %s\n", t.ident, err)
 			accept = false
 		} else if c != 0x0 {
+			Error("Checksum", "%s: Invalid checksum: 0x%x\n", t.ident, c)
 			accept = false
 		}
 	}
+	if !accept {
+		stats.rejectOpt++
+	}
 	return accept
+
 }
 
 func (t *tcpStream) ReassembledSG(sg reassembly.ScatterGather, ac reassembly.AssemblerContext) {
-	dir, _, _, skip := sg.Info()
-	length, _ := sg.Lengths()
-
-	if dir == reassembly.TCPDirClientToServer {
-		// Set network information in the TLSSession
-		cip, sip, cp, sp := getIPPorts(t)
-		t.sshSession.ClientIP = cip
-		t.sshSession.ClientPort = cp
-		t.sshSession.ServerIP = sip
-		t.sshSession.ServerPort = sp
-
-		info := sg.CaptureInfo(0)
-		t.sshSession.Timestamp = info.Timestamp
-		//		t.sshSession.
-		//		stream.tlsSession.SetNetwork(cip, sip, cp, sp)
+	dir, start, end, skip := sg.Info()
+	length, saved := sg.Lengths()
+	// update stats
+	sgStats := sg.Stats()
+	if skip > 0 {
+		stats.missedBytes += skip
 	}
+	stats.sz += length - saved
+	stats.pkt += sgStats.Packets
+	if sgStats.Chunks > 1 {
+		stats.reassembled++
+	}
+	stats.outOfOrderPackets += sgStats.QueuedPackets
+	stats.outOfOrderBytes += sgStats.QueuedBytes
+	if length > stats.biggestChunkBytes {
+		stats.biggestChunkBytes = length
+	}
+	if sgStats.Packets > stats.biggestChunkPackets {
+		stats.biggestChunkPackets = sgStats.Packets
+	}
+	if sgStats.OverlapBytes != 0 && sgStats.OverlapPackets == 0 {
+		fmt.Printf("bytes:%d, pkts:%d\n", sgStats.OverlapBytes, sgStats.OverlapPackets)
+		panic("Invalid overlap")
+	}
+	stats.overlapBytes += sgStats.OverlapBytes
+	stats.overlapPackets += sgStats.OverlapPackets
+
+	var ident string
+	if dir == reassembly.TCPDirClientToServer {
+		ident = fmt.Sprintf("%v %v(%s): ", t.net, t.transport, dir)
+	} else {
+		ident = fmt.Sprintf("%v %v(%s): ", t.net.Reverse(), t.transport.Reverse(), dir)
+	}
+	Debug("%s: SG reassembled packet with %d bytes (start:%v,end:%v,skip:%d,saved:%d,nb:%d,%d,overlap:%d,%d)\n", ident, length, start, end, skip, saved, sgStats.Packets, sgStats.Chunks, sgStats.OverlapBytes, sgStats.OverlapPackets)
+
+	/*fmt.Printf("%s: Data Length: %d   Skip: %d   BannersComplete: %t\n",
+		ident,
+		length,
+		skip,
+		t.sshSession.BannersComplete(),
+	)*/
 
 	if skip == -1 {
 		// this is allowed
 	} else if skip != 0 {
+		/*		fmt.Printf("!! SKIP %d bytes (length:%d)\n",
+					skip,
+					length,
+				)
+
+				d := sg.Fetch(skip)
+				fmt.Printf(" [...] %02x\n", d)*/
+
 		// Missing bytes in stream: do not even try to parse it
 		return
 	}
 	data := sg.Fetch(length)
+
 	if length > 0 {
-		// We attempt to decode SSH
-		ssh := essh.NewESSH(
-			true,
-		)
+
+		// For all SSH we must first decode the banner, if no banner have been
+		// completed, we do not parse the rest of the stream.
+		var decb bool
+		decb = t.sshSession.BannersComplete()
+		ssh := essh.NewESSH(decb)
+
 		var decoded []gopacket.LayerType
 		p := gopacket.NewDecodingLayerParser(essh.LayerTypeESSH, ssh)
 		p.DecodingLayerParserOptions.IgnoreUnsupported = true
 		err := p.DecodeLayers(data, &decoded)
-		if err != nil {
-			// If it's fragmented we keep for next round
-			sg.KeepFrom(0)
-		} else {
+		//fmt.Printf("err: %s\n", err)
+		if err == nil {
 
-			Debug("SSH(%s): %s\n", dir, gopacket.LayerDump(ssh))
+			//			fmt.Printf("SSH(%s): %s\n", dir, gopacket.LayerDump(ssh))
+
+			//			Debug("SSH(%s): %s\n", dir, gopacket.LayerDump(ssh))
 			//				Debug("SSH(%s): %s\n", dir, gopacket.LayerGoString(ssh))
 
 			if ssh.Banner != nil {
+
+				if t.sshSession.Timestamp.IsZero() {
+					info := sg.CaptureInfo(0)
+					t.sshSession.SetTimestamp(info.Timestamp)
+				}
+
 				if dir == reassembly.TCPDirClientToServer {
 					t.sshSession.ClientBanner(ssh.Banner)
 				} else {
 					t.sshSession.ServerBanner(ssh.Banner)
+					// Set network information in the session
+					cip, sip, cp, sp := getIPPorts(t)
+					t.sshSession.SetNetwork(cip, sip, cp, sp)
+				}
+			}
+
+			if ssh.Kexinit != nil {
+				if dir == reassembly.TCPDirClientToServer {
+					t.sshSession.ClientKeyExchangeInit(ssh.Kexinit)
+				} else {
+					t.sshSession.ServerKeyExchangeInit(ssh.Kexinit)
 					t.queueSession()
 				}
+
 			}
 
 		}
@@ -288,6 +373,10 @@ func (t *tcpStream) ReassemblyComplete(ac reassembly.AssemblerContext) bool {
 		t.queueSession()
 	}*/
 
+	fmt.Printf("Complete %s\n",
+		t.ident,
+	)
+
 	// remove connection from the pool
 	return true
 }
@@ -345,7 +434,7 @@ func main() {
 	streamFactory := &tcpStreamFactory{}
 	streamPool := reassembly.NewStreamPool(streamFactory)
 	assembler := reassembly.NewAssembler(streamPool)
-	assembler.AssemblerOptions = assemblerOptions
+	//	assembler.AssemblerOptions = assemblerOptions
 
 	// Signal chan for system signals
 	signalChan := make(chan os.Signal, 1)
@@ -371,6 +460,7 @@ func main() {
 		Debug("PACKET #%d\n", count)
 
 		data := packet.Data()
+		//		fmt.Printf("Packet %d\n", len(data))
 
 		if err := parser.DecodeLayers(data, &decoded); err != nil {
 			// Well it sures complaing about not knowing how to decode TCP
@@ -381,7 +471,7 @@ func main() {
 			case layers.LayerTypeIPv6:
 				//fmt.Println("    IP6 ", ip6.SrcIP, ip6.DstIP)
 			case layers.LayerTypeIPv4:
-				//fmt.Println("    IP4 ", ip4.SrcIP, ip4.DstIP)
+				//				fmt.Println("    IP4 ", ip4.SrcIP, ip4.DstIP, len(data))
 				// defrag the IPv4 packet if required
 				if !*nodefrag {
 					l := ip4.Length
@@ -415,6 +505,14 @@ func main() {
 					c := Context{
 						CaptureInfo: packet.Metadata().CaptureInfo,
 					}
+
+					//infoo := c.GetCaptureInfo()
+					/*fmt.Printf("%s --> %s  %d/%d\n",
+					ip4.SrcIP, ip4.DstIP,
+					infoo.Length, infoo.CaptureLength)*/
+
+					//					fmt.Println("%s %s->%s  %d/%d\n", c.GetCaptureInfo().Timestamp, ip4.SrcIP, ip4.DstIP,						c.GetCaptureInfo().Length, c.GetCaptureInfo().CaptureLength)
+					stats.totalsz += len(tcp.Payload)
 					assembler.AssembleWithContext(packet.NetworkLayer().NetworkFlow(), tcp, &c)
 				}
 				if count%*statsevery == 0 {
@@ -454,10 +552,31 @@ func main() {
 	assembler.FlushAll()
 	streamFactory.WaitGoRoutines()
 
+	fmt.Printf("TCP stats:\n")
+	fmt.Printf(" missed bytes:\t\t%d\n", stats.missedBytes)
+	fmt.Printf(" total packets:\t\t%d\n", stats.pkt)
+	fmt.Printf(" rejected FSM:\t\t%d\n", stats.rejectFsm)
+	fmt.Printf(" rejected Options:\t%d\n", stats.rejectOpt)
+	fmt.Printf(" reassembled bytes:\t%d\n", stats.sz)
+	fmt.Printf(" total TCP bytes:\t%d\n", stats.totalsz)
+	fmt.Printf(" conn rejected FSM:\t%d\n", stats.rejectConnFsm)
+	fmt.Printf(" reassembled chunks:\t%d\n", stats.reassembled)
+	fmt.Printf(" out-of-order packets:\t%d\n", stats.outOfOrderPackets)
+	fmt.Printf(" out-of-order bytes:\t%d\n", stats.outOfOrderBytes)
+	fmt.Printf(" biggest-chunk packets:\t%d\n", stats.biggestChunkPackets)
+	fmt.Printf(" biggest-chunk bytes:\t%d\n", stats.biggestChunkBytes)
+	fmt.Printf(" overlap packets:\t%d\n", stats.overlapPackets)
+	fmt.Printf(" overlap bytes:\t\t%d\n", stats.overlapBytes)
+	fmt.Printf("Errors: %d\n", errors)
+	for e, _ := range errorsMap {
+		fmt.Printf(" %s:\t\t%d\n", e, errorsMap[e])
+	}
+
 	// All systems gone
 	// We close the processing queue
 	close(jobQ)
 	w.Wait()
+
 }
 
 // queueSession tries to enqueue the tlsSession for output

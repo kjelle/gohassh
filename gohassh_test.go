@@ -17,8 +17,10 @@ var testHASSH = map[string]struct {
 }{
 	"SSH-2.0-Cyberduck/6.7.1.28683 (Mac OS X/10.13.6) (x86_64)": {
 		clientrecord: &ClientRecord{
-			Hassh:           `8a8ae540028bf433cd68356c1b9e8d5b`,
-			HasshAlgorithms: `curve25519-sha256@libssh.org,diffie-hellman-group-exchange-sha256,ecdh-sha2-nistp521,ecdh-sha2-nistp384,ecdh-sha2-nistp256,diffie-hellman-group-exchange-sha1,diffie-hellman-group1-sha1,diffie-hellman-group14-sha1,diffie-hellman-group14-sha256,diffie-hellman-group15-sha512,diffie-hellman-group16-sha512,diffie-hellman-group17-sha512,diffie-hellman-group18-sha512,diffie-hellman-group14-sha256@ssh.com,diffie-hellman-group15-sha256,diffie-hellman-group15-sha256@ssh.com,diffie-hellman-group15-sha384@ssh.com,diffie-hellman-group16-sha256,diffie-hellman-group16-sha384@ssh.com,diffie-hellman-group16-sha512@ssh.com,diffie-hellman-group18-sha512@ssh.com;aes128-cbc,aes128-ctr,aes192-cbc,aes192-ctr,aes256-cbc,aes256-ctr,blowfish-cbc,blowfish-ctr,cast128-cbc,cast128-ctr,idea-cbc,idea-ctr,serpent128-cbc,serpent128-ctr,serpent192-cbc,serpent192-ctr,serpent256-cbc,serpent256-ctr,3des-cbc,3des-ctr,twofish128-cbc,twofish128-ctr,twofish192-cbc,twofish192-ctr,twofish256-cbc,twofish256-ctr,twofish-cbc,arcfour,arcfour128,arcfour256;hmac-sha1,hmac-sha1-96,hmac-md5,hmac-md5-96,hmac-sha2-256,hmac-sha2-512;zlib@openssh.com,zlib,none`,
+			HASSH: &HASSH{
+				Hassh:           `8a8ae540028bf433cd68356c1b9e8d5b`,
+				HasshAlgorithms: `curve25519-sha256@libssh.org,diffie-hellman-group-exchange-sha256,ecdh-sha2-nistp521,ecdh-sha2-nistp384,ecdh-sha2-nistp256,diffie-hellman-group-exchange-sha1,diffie-hellman-group1-sha1,diffie-hellman-group14-sha1,diffie-hellman-group14-sha256,diffie-hellman-group15-sha512,diffie-hellman-group16-sha512,diffie-hellman-group17-sha512,diffie-hellman-group18-sha512,diffie-hellman-group14-sha256@ssh.com,diffie-hellman-group15-sha256,diffie-hellman-group15-sha256@ssh.com,diffie-hellman-group15-sha384@ssh.com,diffie-hellman-group16-sha256,diffie-hellman-group16-sha384@ssh.com,diffie-hellman-group16-sha512@ssh.com,diffie-hellman-group18-sha512@ssh.com;aes128-cbc,aes128-ctr,aes192-cbc,aes192-ctr,aes256-cbc,aes256-ctr,blowfish-cbc,blowfish-ctr,cast128-cbc,cast128-ctr,idea-cbc,idea-ctr,serpent128-cbc,serpent128-ctr,serpent192-cbc,serpent192-ctr,serpent256-cbc,serpent256-ctr,3des-cbc,3des-ctr,twofish128-cbc,twofish128-ctr,twofish192-cbc,twofish192-ctr,twofish256-cbc,twofish256-ctr,twofish-cbc,arcfour,arcfour128,arcfour256;hmac-sha1,hmac-sha1-96,hmac-md5,hmac-md5-96,hmac-sha2-256,hmac-sha2-512;zlib@openssh.com,zlib,none`,
+			},
 
 			KexAlgos:                `curve25519-sha256@libssh.org,diffie-hellman-group-exchange-sha256,ecdh-sha2-nistp521,ecdh-sha2-nistp384,ecdh-sha2-nistp256,diffie-hellman-group-exchange-sha1,diffie-hellman-group1-sha1,diffie-hellman-group14-sha1,diffie-hellman-group14-sha256,diffie-hellman-group15-sha512,diffie-hellman-group16-sha512,diffie-hellman-group17-sha512,diffie-hellman-group18-sha512,diffie-hellman-group14-sha256@ssh.com,diffie-hellman-group15-sha256,diffie-hellman-group15-sha256@ssh.com,diffie-hellman-group15-sha384@ssh.com,diffie-hellman-group16-sha256,diffie-hellman-group16-sha384@ssh.com,diffie-hellman-group16-sha512@ssh.com,diffie-hellman-group18-sha512@ssh.com`,
 			CiphersClientServer:     `aes128-cbc,aes128-ctr,aes192-cbc,aes192-ctr,aes256-cbc,aes256-ctr,blowfish-cbc,blowfish-ctr,cast128-cbc,cast128-ctr,idea-cbc,idea-ctr,serpent128-cbc,serpent128-ctr,serpent192-cbc,serpent192-ctr,serpent256-cbc,serpent256-ctr,3des-cbc,3des-ctr,twofish128-cbc,twofish128-ctr,twofish192-cbc,twofish192-ctr,twofish256-cbc,twofish256-ctr,twofish-cbc,arcfour,arcfour128,arcfour256`,
@@ -49,7 +51,7 @@ func testClientRecord(k string, t *testing.T, h *ClientRecord) {
 	h.Hassh = ""
 	h.HasshAlgorithms = ""
 
-	_ = h.HASSH()
+	Hassh := h.Compute()
 	t.Logf("Hassh: %s", h.Hassh)
 	t.Logf("HasshAlgorithms: %s", h.HasshAlgorithms)
 	if !reflect.DeepEqual(h.Hassh, hassh) {
@@ -58,6 +60,13 @@ func testClientRecord(k string, t *testing.T, h *ClientRecord) {
 	if !reflect.DeepEqual(h.HasshAlgorithms, hasshalgorithms) {
 		t.Errorf("failed testcase '%s', mismatch on hassh\n\nexpected:\n%v\ngot: \n%v\n", k, hasshalgorithms, h.HasshAlgorithms)
 	}
+	if !reflect.DeepEqual(Hassh.Hassh, hassh) {
+		t.Errorf("failed testcase '%s', mismatch on resulting Hassh\n\nexpected:\n%v\ngot: \n%v\n", k, hassh, Hassh.Hassh)
+	}
+	if !reflect.DeepEqual(Hassh.HasshAlgorithms, hasshalgorithms) {
+		t.Errorf("failed testcase '%s', mismatch on resulting Hassh\n\nexpected:\n%v\ngot: \n%v\n", k, hasshalgorithms, Hassh.HasshAlgorithms)
+	}
+
 }
 
 func TestHASSHJson(t *testing.T) {
@@ -101,9 +110,10 @@ var testHASSHServer = map[string]struct {
 }{
 	"SSH-2.0-OpenSSH_6.6.1": {
 		serverrecord: &ServerRecord{
-			HasshServer:           `ba6d3d2aecbd0d91b01dfa7828110d70`,
-			HasshServerAlgorithms: `curve25519-sha256@libssh.org,ecdh-sha2-nistp256,ecdh-sha2-nistp384,ecdh-sha2-nistp521,diffie-hellman-group-exchange-sha256,diffie-hellman-group-exchange-sha1,diffie-hellman-group14-sha1,diffie-hellman-group1-sha1;aes128-ctr,aes192-ctr,aes256-ctr,arcfour256,arcfour128,aes128-gcm@openssh.com,aes256-gcm@openssh.com,chacha20-poly1305@openssh.com,aes128-cbc,3des-cbc,blowfish-cbc,cast128-cbc,aes192-cbc,aes256-cbc,arcfour,rijndael-cbc@lysator.liu.se;hmac-md5-etm@openssh.com,hmac-sha1-etm@openssh.com,umac-64-etm@openssh.com,umac-128-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com,hmac-ripemd160-etm@openssh.com,hmac-sha1-96-etm@openssh.com,hmac-md5-96-etm@openssh.com,hmac-md5,hmac-sha1,umac-64@openssh.com,umac-128@openssh.com,hmac-sha2-256,hmac-sha2-512,hmac-ripemd160,hmac-ripemd160@openssh.com,hmac-sha1-96,hmac-md5-96;none,zlib@openssh.com`,
-
+			HASSHServer: &HASSHServer{
+				HasshServer:           `ba6d3d2aecbd0d91b01dfa7828110d70`,
+				HasshServerAlgorithms: `curve25519-sha256@libssh.org,ecdh-sha2-nistp256,ecdh-sha2-nistp384,ecdh-sha2-nistp521,diffie-hellman-group-exchange-sha256,diffie-hellman-group-exchange-sha1,diffie-hellman-group14-sha1,diffie-hellman-group1-sha1;aes128-ctr,aes192-ctr,aes256-ctr,arcfour256,arcfour128,aes128-gcm@openssh.com,aes256-gcm@openssh.com,chacha20-poly1305@openssh.com,aes128-cbc,3des-cbc,blowfish-cbc,cast128-cbc,aes192-cbc,aes256-cbc,arcfour,rijndael-cbc@lysator.liu.se;hmac-md5-etm@openssh.com,hmac-sha1-etm@openssh.com,umac-64-etm@openssh.com,umac-128-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com,hmac-ripemd160-etm@openssh.com,hmac-sha1-96-etm@openssh.com,hmac-md5-96-etm@openssh.com,hmac-md5,hmac-sha1,umac-64@openssh.com,umac-128@openssh.com,hmac-sha2-256,hmac-sha2-512,hmac-ripemd160,hmac-ripemd160@openssh.com,hmac-sha1-96,hmac-md5-96;none,zlib@openssh.com`,
+			},
 			KexAlgos:                `curve25519-sha256@libssh.org,ecdh-sha2-nistp256,ecdh-sha2-nistp384,ecdh-sha2-nistp521,diffie-hellman-group-exchange-sha256,diffie-hellman-group-exchange-sha1,diffie-hellman-group14-sha1,diffie-hellman-group1-sha1`,
 			CiphersServerClient:     `aes128-ctr,aes192-ctr,aes256-ctr,arcfour256,arcfour128,aes128-gcm@openssh.com,aes256-gcm@openssh.com,chacha20-poly1305@openssh.com,aes128-cbc,3des-cbc,blowfish-cbc,cast128-cbc,aes192-cbc,aes256-cbc,arcfour,rijndael-cbc@lysator.liu.se`,
 			MACsServerClient:        `hmac-md5-etm@openssh.com,hmac-sha1-etm@openssh.com,umac-64-etm@openssh.com,umac-128-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com,hmac-ripemd160-etm@openssh.com,hmac-sha1-96-etm@openssh.com,hmac-md5-96-etm@openssh.com,hmac-md5,hmac-sha1,umac-64@openssh.com,umac-128@openssh.com,hmac-sha2-256,hmac-sha2-512,hmac-ripemd160,hmac-ripemd160@openssh.com,hmac-sha1-96,hmac-md5-96`,
@@ -133,7 +143,7 @@ func testServerRecord(k string, t *testing.T, h *ServerRecord) {
 	h.HasshServer = ""
 	h.HasshServerAlgorithms = ""
 
-	_ = h.HASSHServer()
+	HasshServer := h.Compute()
 	t.Logf("HasshServer: %s", h.HasshServer)
 	t.Logf("HasshServerAlgorithms: %s", h.HasshServerAlgorithms)
 	if !reflect.DeepEqual(h.HasshServer, hasshserver) {
@@ -142,6 +152,14 @@ func testServerRecord(k string, t *testing.T, h *ServerRecord) {
 	if !reflect.DeepEqual(h.HasshServerAlgorithms, hasshserveralgorithms) {
 		t.Errorf("failed testcase '%s', mismatch on hasshserver\n\nexpected:\n%v\ngot: \n%v\n", k, hasshserveralgorithms, h.HasshServerAlgorithms)
 	}
+
+	if !reflect.DeepEqual(HasshServer.HasshServer, hasshserver) {
+		t.Errorf("failed testcase '%s', mismatch on resulting HasshServer\n\nexpected:\n%v\ngot: \n%v\n", k, hasshserver, HasshServer.HasshServer)
+	}
+	if !reflect.DeepEqual(HasshServer.HasshServerAlgorithms, hasshserveralgorithms) {
+		t.Errorf("failed testcase '%s', mismatch on resulting HasshServer\n\nexpected:\n%v\ngot: \n%v\n", k, hasshserveralgorithms, HasshServer.HasshServerAlgorithms)
+	}
+
 }
 
 type TestFile struct {

@@ -9,8 +9,6 @@ const (
 	StateServerBanner
 	StateClientKexInit
 	StateServerKexInit
-	StateClientKeyExchange
-	StateServerKeyExchange
 )
 
 func (s *State) Set(flag State) {

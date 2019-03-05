@@ -19,9 +19,7 @@ const hasshFieldDelimiter = byte(59) // ;
 const hasshVersion = "1.0"
 
 type ClientRecord struct {
-	Hassh                   string `json:"hassh"`
-	HasshAlgorithms         string `json:"hasshAlgorithms"`
-	HasshVersion            string `json:"hasshVersion"`
+	*HASSH
 	KexAlgos                string `json:"ckex"`
 	ServerHostKeyAlgos      string `json:"cshka"`
 	CiphersClientServer     string `json:"ceacts"`
@@ -34,7 +32,13 @@ type ClientRecord struct {
 	LanguagesServerClient   string `json:"clstc"`
 }
 
-func (h *ClientRecord) HASSH() string {
+type HASSH struct {
+	Hassh           string `json:"hassh"`
+	HasshAlgorithms string `json:"hasshAlgorithms"`
+	HasshVersion    string `json:"hasshVersion"`
+}
+
+func (h *ClientRecord) Compute() *HASSH {
 	buf := bytes.Buffer{}
 	_, _ = buf.WriteString(h.KexAlgos)
 	_ = buf.WriteByte(hasshFieldDelimiter)
@@ -44,15 +48,16 @@ func (h *ClientRecord) HASSH() string {
 	_ = buf.WriteByte(hasshFieldDelimiter)
 	_, _ = buf.WriteString(h.CompressionClientServer)
 	tmp := md5.Sum(buf.Bytes())
+
+	h.HASSH = &HASSH{}
+	h.HasshVersion = hasshVersion
 	h.HasshAlgorithms = buf.String()
 	h.Hassh = hex.EncodeToString(tmp[:])
-	return h.Hassh
+	return h.HASSH
 }
 
 type ServerRecord struct {
-	HasshServer             string `json:"hasshServer"`
-	HasshServerAlgorithms   string `json:"hasshServerAlgorithms"`
-	HasshVersion            string `json:"hasshVersion"`
+	*HASSHServer
 	KexAlgos                string `json:"skex"`
 	ServerHostKeyAlgos      string `json:"sshka"`
 	CiphersClientServer     string `json:"seacts"`
@@ -65,7 +70,13 @@ type ServerRecord struct {
 	LanguagesServerClient   string `json:"slstc"`
 }
 
-func (h *ServerRecord) HASSHServer() string {
+type HASSHServer struct {
+	HasshServer           string `json:"hasshServer"`
+	HasshServerAlgorithms string `json:"hasshServerAlgorithms"`
+	HasshVersion          string `json:"hasshVersion"`
+}
+
+func (h *ServerRecord) Compute() *HASSHServer {
 	buf := bytes.Buffer{}
 	_, _ = buf.WriteString(h.KexAlgos)
 	_ = buf.WriteByte(hasshFieldDelimiter)
@@ -75,7 +86,10 @@ func (h *ServerRecord) HASSHServer() string {
 	_ = buf.WriteByte(hasshFieldDelimiter)
 	_, _ = buf.WriteString(h.CompressionServerClient)
 	tmp := md5.Sum(buf.Bytes())
+
+	h.HASSHServer = &HASSHServer{}
+	h.HasshVersion = hasshVersion
 	h.HasshServerAlgorithms = buf.String()
 	h.HasshServer = hex.EncodeToString(tmp[:])
-	return h.HasshServer
+	return h.HASSHServer
 }

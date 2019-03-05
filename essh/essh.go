@@ -16,8 +16,11 @@ type ESSHType uint8
 
 // ESSHType known values, possibly defined in RFC 4253, section 12.
 const (
-	ESSH_BANNER      ESSHType = 53
-	ESSH_MSG_KEXINIT ESSHType = 20 // SSH_MSG_KEXINIT
+	ESSH_BANNER         ESSHType = 53
+	ESSH_MSG_KEXINIT    ESSHType = 20 // SSH_MSG_KEXINIT
+	ESSH_MSG_NEW_KEYS            = 21 // SSH_MSG_NEWKEYS
+	ESSH_MSG_DHKEXINIT  ESSHType = 30
+	ESSH_MSG_DHKEXREPLY ESSHType = 31
 )
 
 // String shows the register type nicely formatted
@@ -28,7 +31,14 @@ func (ss ESSHType) String() string {
 	case ESSH_BANNER:
 		return "Banner"
 	case ESSH_MSG_KEXINIT:
-		return "Message Key Exchange Init"
+		return "Key Exchange Init"
+	case ESSH_MSG_NEW_KEYS:
+		return "New Keys"
+	case ESSH_MSG_DHKEXINIT:
+		return "Diffie-Hellman Key Exchange Init"
+	case ESSH_MSG_DHKEXREPLY:
+		return "Diffie-Hellman Key Exchange Reploy"
+
 	}
 }
 
@@ -105,6 +115,8 @@ func (s *ESSH) DecodeFromBytes(data []byte, df gopacket.DecodeFeedback) error {
 }
 
 func (s *ESSH) decodeESSHRecords(data []byte, df gopacket.DecodeFeedback) error {
+	var err error
+
 	if len(data) < 4 {
 		df.SetTruncated()
 		return errors.New("ESSH record too short")
@@ -116,51 +128,24 @@ func (s *ESSH) decodeESSHRecords(data []byte, df gopacket.DecodeFeedback) error 
 
 	if !s.BannersComplete {
 		var r ESSHBannerRecord
-		e := r.decodeFromBytes(data, df)
-		if e == nil {
+		err = r.decodeFromBytes(data, df)
+		if err == nil {
 			// Banner successful!
 			s.Banner = &r
 			return nil
 		}
 
-		// We return nil anyways, since we stop processing.
+		// We return nil anyways, since we stop processing this packet.
+		// TODO: can we get the next packet into the same data?
 		return nil
 	}
 
-	fmt.Printf("Decode kex? BannersComplete:%t %02x\n", s.BannersComplete, data[0:2])
-
-	var h ESSHRecordHeader
-	e := h.decodeFromBytes(data, df)
-	if e != nil {
-		return e
+	err = s.decodeKexRecords(data, df)
+	if err != nil {
+		return err
 	}
 
-	hl := 6 // header length
-	tl := hl + int(h.PacketLength)
-	if len(data) < tl {
-		df.SetTruncated()
-		return errors.New("ESSH packet lengt mismatch")
-	}
-
-	switch h.MessageCode {
-	default:
-		return errors.New("Unknown ESSH message code")
-	case ESSH_MSG_KEXINIT:
-		var r ESSHKexinitRecord
-		e := r.decodeFromBytes(data, h.PaddingLength, df)
-		if e == nil {
-			// Key Exchange successful!
-			s.Kexinit = &r
-			return nil
-		}
-	}
-
-	if len(data) == tl {
-		return nil
-	}
-
-	return s.decodeESSHRecords(data[tl:len(data)], df)
-
+	return nil
 }
 
 func (s *ESSH) decodeKexRecords(data []byte, df gopacket.DecodeFeedback) error {
@@ -178,7 +163,7 @@ func (s *ESSH) decodeKexRecords(data []byte, df gopacket.DecodeFeedback) error {
 	}
 
 	if h.MessageCode != ESSH_MSG_KEXINIT {
-		return fmt.Errorf("Wrong messagecode, should be ESSH_MSG_KEXINIT (%d)", h.MessageCode)
+		return fmt.Errorf("Wrong messagecode (%d), should be ESSH_MSG_KEXINIT (%d)", h.MessageCode, ESSH_MSG_KEXINIT)
 	}
 
 	var r ESSHKexinitRecord
