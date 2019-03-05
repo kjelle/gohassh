@@ -315,6 +315,10 @@ func (t *tcpStream) ReassembledSG(sg reassembly.ScatterGather, ac reassembly.Ass
 			}
 
 			if ssh.Kexinit != nil {
+				if ssh.Kexinit.FirstKexFollows {
+					fmt.Printf("%s> FirstKexFollows\n")
+				}
+
 				if dir == reassembly.TCPDirClientToServer {
 					t.sshSession.ClientKeyExchangeInit(ssh.Kexinit)
 				} else {

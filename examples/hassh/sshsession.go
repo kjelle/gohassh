@@ -84,6 +84,7 @@ func (s *SSHSession) ClientKeyExchangeInit(k *essh.ESSHKexinitRecord) {
 		CompressionServerClient: k.CompressionServerClient,
 		LanguagesClientServer:   k.LanguagesClientServer,
 		LanguagesServerClient:   k.LanguagesServerClient,
+		FirstKexFollows:         k.FirstKexFollows,
 	}
 	s.Client.HASSH = cr.Compute()
 }
@@ -101,6 +102,7 @@ func (s *SSHSession) ServerKeyExchangeInit(k *essh.ESSHKexinitRecord) {
 		CompressionServerClient: k.CompressionServerClient,
 		LanguagesClientServer:   k.LanguagesClientServer,
 		LanguagesServerClient:   k.LanguagesServerClient,
+		FirstKexFollows:         k.FirstKexFollows,
 	}
 	s.Server.HASSHServer = sr.Compute()
 }
