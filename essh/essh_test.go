@@ -30,14 +30,6 @@ func TestSshPacket(t *testing.T) {
 
 			t.Logf("Banner: %+v", s.Banner)
 			t.Logf("Kexinit: %+v", s.Kexinit)
-
-			/*			if r.ProtoVersion != test.proto_version {
-							t.Errorf("failed testcase '%s', mismatch on ProtoVersion\n\nexpected:\n%s\ngot: \n%s\n", k, test.proto_version, r.ProtoVersion)
-						}
-						if r.SoftwareVersion != test.software_version {
-							t.Errorf("failed testcase '%s', mismatch on SoftwareVersion\n\nexpected:\n%s\ngot: \n%s\n", k, test.software_version, r.SoftwareVersion)
-						}*/
-
 		})
 	}
 }

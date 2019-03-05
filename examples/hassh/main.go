@@ -279,14 +279,18 @@ func (t *tcpStream) ReassembledSG(sg reassembly.ScatterGather, ac reassembly.Ass
 		decb = t.sshSession.BannersComplete()
 		ssh := essh.NewESSH(decb)
 
-		if length > 1000 {
-			fmt.Printf("%s> Packet content (%d/0x%x)\n%s\n", ident, len(data), len(data), hex.Dump(data))
-		}
-
 		var decoded []gopacket.LayerType
 		p := gopacket.NewDecodingLayerParser(essh.LayerTypeESSH, ssh)
 		p.DecodingLayerParserOptions.IgnoreUnsupported = true
 		err := p.DecodeLayers(data, &decoded)
+
+		if length > 1000 {
+			fmt.Printf("%s> Packet content (%d/0x%x)\n%s\n", ident, len(data), len(data), hex.Dump(data))
+			if err != nil {
+				fmt.Printf("%s> Error: %s\n", err)
+			}
+		}
+
 		//fmt.Printf("err: %s\n", err)
 		if err == nil {
 			//			fmt.Printf("SSH(%s): %s\n", dir, gopacket.LayerDump(ssh))
