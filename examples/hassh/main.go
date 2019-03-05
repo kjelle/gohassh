@@ -285,14 +285,10 @@ func (t *tcpStream) ReassembledSG(sg reassembly.ScatterGather, ac reassembly.Ass
 		err := p.DecodeLayers(data, &decoded)
 		//fmt.Printf("err: %s\n", err)
 		if err == nil {
-
 			//			fmt.Printf("SSH(%s): %s\n", dir, gopacket.LayerDump(ssh))
-
 			//			Debug("SSH(%s): %s\n", dir, gopacket.LayerDump(ssh))
 			//				Debug("SSH(%s): %s\n", dir, gopacket.LayerGoString(ssh))
-
 			if ssh.Banner != nil {
-
 				if t.sshSession.Timestamp.IsZero() {
 					info := sg.CaptureInfo(0)
 					t.sshSession.SetTimestamp(info.Timestamp)
@@ -305,23 +301,20 @@ func (t *tcpStream) ReassembledSG(sg reassembly.ScatterGather, ac reassembly.Ass
 					// Set network information in the session
 					cip, sip, cp, sp := getIPPorts(t)
 					t.sshSession.SetNetwork(cip, sip, cp, sp)
-
-					t.queueSession()
-
 				}
 			}
 
 			if ssh.Kexinit != nil {
 				if dir == reassembly.TCPDirClientToServer {
 					t.sshSession.ClientKeyExchangeInit(ssh.Kexinit)
-					t.queueSession()
 				} else {
 					t.sshSession.ServerKeyExchangeInit(ssh.Kexinit)
-					t.queueSession()
 				}
-
 			}
 
+			if t.sshSession.KexInitComplete() && !t.queued {
+				t.queueSession()
+			}
 		}
 	}
 
@@ -338,7 +331,10 @@ func getIPPorts(t *tcpStream) (string, string, string, string) {
 }
 
 func (t *tcpStream) ReassemblyComplete(ac reassembly.AssemblerContext) bool {
-	// TODO: What about partial sessions?
+	partial := true
+	if partial && !t.queued && t.sshSession.state > 0 {
+		t.queueSession()
+	}
 
 	// remove connection from the pool
 	return true
