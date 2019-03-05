@@ -126,18 +126,25 @@ func (s *ESSH) decodeESSHRecords(data []byte, df gopacket.DecodeFeedback) error 
 	// pointing to this layer
 	s.BaseLayer = layers.BaseLayer{Contents: data[:len(data)]}
 
+	// If banners are not complete, try to parse these first.
 	if !s.BannersComplete {
 		var r ESSHBannerRecord
-		err = r.decodeFromBytes(data, df)
-		if err == nil {
-			// Banner successful!
-			s.Banner = &r
+		bl, err := r.decodeFromBytes(data, df)
+		if err != nil {
+			// We must parse banners first, and these banners are invalid. Abort!
 			return nil
 		}
 
-		// We return nil anyways, since we stop processing this packet.
-		// TODO: can we get the next packet into the same data?
-		return nil
+		// Banner successful!
+		s.Banner = &r
+		s.BannersComplete = true // important, if we have more data!
+		if bl == len(data) {
+			// All data is decoded!
+			return nil
+		}
+
+		// We must decode the rest of the data!
+		return s.decodeESSHRecords(data[bl:len(data)], df)
 	}
 
 	err = s.decodeKexRecords(data, df)
@@ -159,7 +166,7 @@ func (s *ESSH) decodeKexRecords(data []byte, df gopacket.DecodeFeedback) error {
 	tl := hl + int(h.PacketLength) - 2 // minus padding_length and MessageCode field
 	if len(data) < tl {
 		df.SetTruncated()
-		return errors.New("ESSH packet lengt mismatch")
+		return errors.New("ESSH packet length mismatch")
 	}
 
 	if h.MessageCode != ESSH_MSG_KEXINIT {

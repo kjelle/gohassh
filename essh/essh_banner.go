@@ -3,7 +3,6 @@ package essh
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"io"
 
 	"github.com/google/gopacket"
@@ -24,23 +23,25 @@ type ESSHBannerRecord struct {
 //
 //   SSH-<protoversion>-<softwareversion> <space> <comments...> CR LF
 //
-func (s *ESSHBannerRecord) decodeFromBytes(data []byte, df gopacket.DecodeFeedback) error {
-	if len(data) > maxVersionStringBytes {
-		return fmt.Errorf("Invalid version string, it should be less than %d characters including <CR><LF>",
+// It returns how much of the data that was processed.
+func (s *ESSHBannerRecord) decodeFromBytes(data []byte, df gopacket.DecodeFeedback) (int, error) {
+	/*	if len(data) > maxVersionStringBytes {
+		return 0, fmt.Errorf("Invalid version string, it should be less than %d characters including <CR><LF>",
 			maxVersionStringBytes,
 		)
-	}
+	}*/
 
 	versionString := make([]byte, 0, 64)
 	var ok bool
 	var buf [1]byte
+	crlf := 0
 
 	r := bytes.NewReader(data)
 
 	for length := 0; length < maxVersionStringBytes; length++ {
 		_, err := io.ReadFull(r, buf[:])
 		if err != nil {
-			return err
+			return 0, err
 		}
 		// The RFC says that the version should be terminated with \r\n
 		// but several SSH servers actually only send a \n.
@@ -52,6 +53,7 @@ func (s *ESSHBannerRecord) decodeFromBytes(data []byte, df gopacket.DecodeFeedba
 				versionString = versionString[:0]
 				continue
 			}
+			crlf += 1
 			ok = true
 			break
 		}
@@ -66,12 +68,13 @@ func (s *ESSHBannerRecord) decodeFromBytes(data []byte, df gopacket.DecodeFeedba
 	}
 
 	if !ok {
-		return errors.New("invalid version string")
+		return 0, errors.New("invalid version string")
 	}
 
 	// There might be a '\r' on the end which we should remove.
 	if len(versionString) > 0 && versionString[len(versionString)-1] == '\r' {
 		versionString = versionString[:len(versionString)-1]
+		crlf += 1
 	}
 
 	lvs := len(versionString)
@@ -82,7 +85,7 @@ func (s *ESSHBannerRecord) decodeFromBytes(data []byte, df gopacket.DecodeFeedba
 	// Next is the protocol version before the next `-`
 	p := bytes.Index(data[bptr:], []byte("-"))
 	if p < 1 {
-		return errors.New("invalid version string: length of protocol version is too short")
+		return 0, errors.New("invalid version string: length of protocol version is too short")
 	}
 	s.ProtoVersion = string(data[bptr:(bptr + p)])
 	bptr += p
@@ -93,10 +96,13 @@ func (s *ESSHBannerRecord) decodeFromBytes(data []byte, df gopacket.DecodeFeedba
 	if sp < 0 {
 		// No comment given
 		s.SoftwareVersion = string(data[bptr:lvs])
+		bptr = lvs
 	} else {
 		// Software version is everything before the space.
 		s.SoftwareVersion = string(data[bptr:(bptr + sp)])
+		bptr += sp
 	}
 
-	return nil
+	bptr += crlf // Skip the line feed bytes.
+	return bptr, nil
 }
