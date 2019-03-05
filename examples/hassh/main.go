@@ -287,12 +287,14 @@ func (t *tcpStream) ReassembledSG(sg reassembly.ScatterGather, ac reassembly.Ass
 		if length > 1000 {
 			fmt.Printf("%s> Packet content (%d/0x%x)\n%s\n", ident, len(data), len(data), hex.Dump(data))
 			if err != nil {
-				fmt.Printf("%s> Error: %s\n", err)
+				fmt.Printf("%s> Error: %s\n", ident, err)
 			}
 		}
 
-		//fmt.Printf("err: %s\n", err)
-		if err == nil {
+		if err != nil {
+			// If it's fragmented we keep for next round
+			sg.KeepFrom(0)
+		} else {
 			//			fmt.Printf("SSH(%s): %s\n", dir, gopacket.LayerDump(ssh))
 			//			Debug("SSH(%s): %s\n", dir, gopacket.LayerDump(ssh))
 			//				Debug("SSH(%s): %s\n", dir, gopacket.LayerGoString(ssh))
