@@ -280,7 +280,7 @@ func (t *tcpStream) ReassembledSG(sg reassembly.ScatterGather, ac reassembly.Ass
 		ssh := essh.NewESSH(decb)
 
 		if length > 1000 {
-			Debug("Packet content (%d/0x%x)\n%s\n", len(data), len(data), hex.Dump(data))
+			fmt.Printf("Packet content (%d/0x%x)\n%s\n", len(data), len(data), hex.Dump(data))
 		}
 
 		var decoded []gopacket.LayerType
