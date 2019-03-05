@@ -3,6 +3,7 @@ package essh
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
@@ -47,7 +48,7 @@ func (sv ESSHVersion) String() string {
 type ESSH struct {
 	layers.BaseLayer
 
-	decodeBanner bool
+	BannersComplete bool
 
 	// ESSH Records
 	Banner  *ESSHBannerRecord
@@ -77,7 +78,7 @@ func (h *ESSHRecordHeader) decodeFromBytes(data []byte, df gopacket.DecodeFeedba
 
 func NewESSH(decb bool) *ESSH {
 	return &ESSH{
-		decodeBanner: decb,
+		BannersComplete: decb,
 	}
 }
 
@@ -113,7 +114,7 @@ func (s *ESSH) decodeESSHRecords(data []byte, df gopacket.DecodeFeedback) error 
 	// pointing to this layer
 	s.BaseLayer = layers.BaseLayer{Contents: data[:len(data)]}
 
-	if s.decodeBanner {
+	if !s.BannersComplete {
 		var r ESSHBannerRecord
 		e := r.decodeFromBytes(data, df)
 		if e == nil {
@@ -121,7 +122,12 @@ func (s *ESSH) decodeESSHRecords(data []byte, df gopacket.DecodeFeedback) error 
 			s.Banner = &r
 			return nil
 		}
+
+		// We return nil anyways, since we stop processing.
+		return nil
 	}
+
+	fmt.Printf("Decode kex? BannersComplete:%t %02x\n", s.BannersComplete, data[0:2])
 
 	var h ESSHRecordHeader
 	e := h.decodeFromBytes(data, df)
@@ -155,6 +161,34 @@ func (s *ESSH) decodeESSHRecords(data []byte, df gopacket.DecodeFeedback) error 
 
 	return s.decodeESSHRecords(data[tl:len(data)], df)
 
+}
+
+func (s *ESSH) decodeKexRecords(data []byte, df gopacket.DecodeFeedback) error {
+	var h ESSHRecordHeader
+	err := h.decodeFromBytes(data, df)
+	if err != nil {
+		return err
+	}
+
+	hl := 6                            // header length
+	tl := hl + int(h.PacketLength) - 2 // minus padding_length and MessageCode field
+	if len(data) < tl {
+		df.SetTruncated()
+		return errors.New("ESSH packet lengt mismatch")
+	}
+
+	if h.MessageCode != ESSH_MSG_KEXINIT {
+		return fmt.Errorf("Wrong messagecode, should be ESSH_MSG_KEXINIT (%d)", h.MessageCode)
+	}
+
+	var r ESSHKexinitRecord
+	err = r.decodeFromBytes(data[hl:tl], h.PaddingLength, gopacket.NilDecodeFeedback)
+	if err != nil {
+		return err
+	}
+	// Key Exchange successful!
+	s.Kexinit = &r
+	return nil
 }
 
 // CanDecode implements gopacket.DecodingLayer.

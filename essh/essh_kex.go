@@ -26,17 +26,17 @@ import (
 //
 type ESSHKexinitRecord struct {
 	//	Cookie                  [16]byte `sshtype:"20"`
-	KexAlgos                string
-	ServerHostKeyAlgos      string
-	CiphersClientServer     string
-	CiphersServerClient     string
-	MACsClientServer        string
-	MACsServerClient        string
-	CompressionClientServer string
-	CompressionServerClient string
-	LanguagesClientServer   string
-	LanguagesServerClient   string
-	FirstKexFollows         bool
+	KexAlgos                string `json:"kex"`
+	ServerHostKeyAlgos      string `json:"shka"`
+	CiphersClientServer     string `json:"eacts"`
+	CiphersServerClient     string `json:"eastc"`
+	MACsClientServer        string `json:"macts"`
+	MACsServerClient        string `json:"mastc"`
+	CompressionClientServer string `json:"cacts"`
+	CompressionServerClient string `json:"castc"`
+	LanguagesClientServer   string `json:"lcts"`
+	LanguagesServerClient   string `json:"lstc"`
+	FirstKexFollows         bool   `json:"follow"`
 	//	Reserved                uint32
 }
 
@@ -132,7 +132,6 @@ func (s *ESSHKexinitRecord) decodeFromBytes(data []byte, pad uint8, df gopacket.
 	}
 
 	// first_kex_packet_follows
-	fmt.Printf("before/after followS: %02x\n", data[(bptr-9):(bptr+2)])
 	s.FirstKexFollows = data[bptr] != 0
 	bptr += 1
 
