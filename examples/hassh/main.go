@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"io/ioutil"
@@ -35,6 +36,8 @@ var verbose = flag.Bool("verbose", false, "Be verbose")
 var debug = flag.Bool("debug", false, "Display debug information")
 var quiet = flag.Bool("quiet", false, "Be quiet regarding errors")
 
+var hexdumppkt = flag.Bool("dumppkt", false, "Dump packet as hex")
+
 // capture
 var iface = flag.String("i", "eth0", "Interface to read packets from")
 var snaplen = flag.Int("s", 65536, "Snap length (number of bytes max to read per packet")
@@ -52,11 +55,11 @@ var pprofenabled = flag.Bool("pprof", false, "enabling net/http/pprof")
 var pprofint = flag.String("pprofint", "0.0.0.0", "interface to listen to")
 var pprofport = flag.Int("pprofport", 8080, "port to listen for pprof")
 
-const timeout time.Duration = time.Second * 15      // Pending bytes: TODO: from CLI
-const closeTimeout time.Duration = time.Second * 30 // Closing inactive: TODO: from CLI
+const timeout time.Duration = time.Second * 5       // Pending bytes: TODO: from CLI
+const closeTimeout time.Duration = time.Second * 10 // Closing inactive: TODO: from CLI
 
 var assemblerOptions = reassembly.AssemblerOptions{
-	MaxBufferedPagesPerConnection: 16,
+	MaxBufferedPagesPerConnection: 0,
 	MaxBufferedPagesTotal:         0, // unlimited
 }
 
@@ -83,6 +86,7 @@ var errorsMap map[string]uint
 var errorsMapMutex sync.Mutex
 var errors uint
 var outFile *os.File
+var done bool
 
 // Too bad for perf that a... is evaluated
 func Error(t string, s string, a ...interface{}) {
@@ -95,7 +99,7 @@ func Error(t string, s string, a ...interface{}) {
 		//fmt.Printf(s, a...)
 	}
 
-	//	fmt.Printf(s, a...)
+	fmt.Printf(s, a...)
 }
 func Info(s string, a ...interface{}) {
 	if outputLevel >= 1 {
@@ -301,12 +305,16 @@ func (t *tcpStream) ReassembledSG(sg reassembly.ScatterGather, ac reassembly.Ass
 					// Set network information in the session
 					cip, sip, cp, sp := getIPPorts(t)
 					t.sshSession.SetNetwork(cip, sip, cp, sp)
+
+					t.queueSession()
+
 				}
 			}
 
 			if ssh.Kexinit != nil {
 				if dir == reassembly.TCPDirClientToServer {
 					t.sshSession.ClientKeyExchangeInit(ssh.Kexinit)
+					t.queueSession()
 				} else {
 					t.sshSession.ServerKeyExchangeInit(ssh.Kexinit)
 					t.queueSession()
@@ -380,6 +388,7 @@ func main() {
 	}
 
 	source := gopacket.NewPacketSource(handle, handle.LinkType())
+	source.Lazy = false
 	source.NoCopy = true
 	Info("Starting to read packets\n")
 	count := 0
@@ -389,7 +398,7 @@ func main() {
 	streamFactory := &tcpStreamFactory{}
 	streamPool := reassembly.NewStreamPool(streamFactory)
 	assembler := reassembly.NewAssembler(streamPool)
-	//	assembler.AssemblerOptions = assemblerOptions
+	assembler.AssemblerOptions = assemblerOptions
 
 	// Signal chan for system signals
 	signalChan := make(chan os.Signal, 1)
@@ -404,87 +413,87 @@ func main() {
 	w.Add(1)
 	go processCompletedSession(cancelC, jobQ, &w)
 
-	var eth layers.Ethernet
-	var ip4 layers.IPv4
-	var ip6 layers.IPv6
-	parser := gopacket.NewDecodingLayerParser(layers.LayerTypeEthernet, &eth, &ip4, &ip6)
-	decoded := []gopacket.LayerType{}
+	/*	var eth layers.Ethernet
+		var ip4 layers.IPv4
+		var ip6 layers.IPv6
+		parser := gopacket.NewDecodingLayerParser(layers.LayerTypeEthernet, &eth, &ip4, &ip6)
+		decoded := []gopacket.LayerType{}*/
 
 	for packet := range source.Packets() {
 		count++
 		Debug("PACKET #%d\n", count)
-
 		data := packet.Data()
-		//		fmt.Printf("Packet %d\n", len(data))
-
-		if err := parser.DecodeLayers(data, &decoded); err != nil {
-			// Well it sures complaing about not knowing how to decode TCP
+		bytes += int64(len(data))
+		if *hexdumppkt {
+			Debug("Packet content (%d/0x%x)\n%s\n", len(data), len(data), hex.Dump(data))
 		}
 
-		for _, layerType := range decoded {
-			switch layerType {
-			case layers.LayerTypeIPv6:
-				//fmt.Println("    IP6 ", ip6.SrcIP, ip6.DstIP)
-			case layers.LayerTypeIPv4:
-				//				fmt.Println("    IP4 ", ip4.SrcIP, ip4.DstIP, len(data))
-				// defrag the IPv4 packet if required
-				if !*nodefrag {
-					l := ip4.Length
-					newip4, err := defragger.DefragIPv4(&ip4)
-					if err != nil {
-						log.Fatalln("Error while de-fragmenting", err)
-					} else if newip4 == nil {
-						Debug("Fragment...\n")
-						continue // ip packet fragment, we don't have whole packet yet.
-					}
-					if newip4.Length != l {
-						Debug("Decoding re-assembled packet: %s\n", newip4.NextLayerType())
-						pb, ok := packet.(gopacket.PacketBuilder)
-						if !ok {
-							panic("Not a PacketBuilder")
-						}
-						nextDecoder := newip4.NextLayerType()
-						nextDecoder.Decode(newip4.Payload, pb)
-					}
+		// defrag the IPv4 packet if required
+		if !*nodefrag {
+			ip4Layer := packet.Layer(layers.LayerTypeIPv4)
+			if ip4Layer == nil {
+				continue
+			}
+			ip4 := ip4Layer.(*layers.IPv4)
+			l := ip4.Length
+			newip4, err := defragger.DefragIPv4(ip4)
+			if err != nil {
+				log.Fatalln("Error while de-fragmenting", err)
+			} else if newip4 == nil {
+				Debug("Fragment...\n")
+				continue // ip packet fragment, we don't have whole packet yet.
+			}
+			if newip4.Length != l {
+				Debug("Decoding re-assembled packet: %s\n", newip4.NextLayerType())
+				pb, ok := packet.(gopacket.PacketBuilder)
+				if !ok {
+					panic("Not a PacketBuilder")
 				}
-
-				tcp := packet.Layer(layers.LayerTypeTCP)
-				if tcp != nil {
-					tcp := tcp.(*layers.TCP)
-					if *checksum {
-						err := tcp.SetNetworkLayerForChecksum(packet.NetworkLayer())
-						if err != nil {
-							log.Fatalf("Failed to set network layer for checksum: %s\n", err)
-						}
-					}
-					c := Context{
-						CaptureInfo: packet.Metadata().CaptureInfo,
-					}
-
-					//infoo := c.GetCaptureInfo()
-					/*fmt.Printf("%s --> %s  %d/%d\n",
-					ip4.SrcIP, ip4.DstIP,
-					infoo.Length, infoo.CaptureLength)*/
-
-					//					fmt.Println("%s %s->%s  %d/%d\n", c.GetCaptureInfo().Timestamp, ip4.SrcIP, ip4.DstIP,						c.GetCaptureInfo().Length, c.GetCaptureInfo().CaptureLength)
-					stats.totalsz += len(tcp.Payload)
-					assembler.AssembleWithContext(packet.NetworkLayer().NetworkFlow(), tcp, &c)
-				}
-				if count%*statsevery == 0 {
-					ref := packet.Metadata().CaptureInfo.Timestamp
-					flushed, closed := assembler.FlushWithOptions(reassembly.FlushOptions{T: ref.Add(-timeout), TC: ref.Add(-closeTimeout)})
-					fmt.Printf(" -- forced flush: %d flushed, %d closed (%s)\n", flushed, closed, ref)
-				}
-
-				//ref := packet.Metadata().CaptureInfo.Timestamp
-				//flushed, closed := assembler.FlushWithOptions(reassembly.FlushOptions{T: ref.Add(time.Minute * 30), TC: ref.Add(time.Minute * 5)})
-				//Debug("Forced flush: %d flushed, %d closed (%s)", flushed, closed, ref)
+				nextDecoder := newip4.NextLayerType()
+				nextDecoder.Decode(newip4.Payload, pb)
 			}
 		}
 
-		bytes += int64(len(data))
+		tcp := packet.Layer(layers.LayerTypeTCP)
+		if tcp != nil {
+			tcp := tcp.(*layers.TCP)
+			if *checksum {
+				err := tcp.SetNetworkLayerForChecksum(packet.NetworkLayer())
+				if err != nil {
+					log.Fatalf("Failed to set network layer for checksum: %s\n", err)
+				}
+			}
+			c := Context{
+				CaptureInfo: packet.Metadata().CaptureInfo,
+			}
+			stats.totalsz += len(tcp.Payload)
+			assembler.AssembleWithContext(packet.NetworkLayer().NetworkFlow(), tcp, &c)
+		}
+		if count%*statsevery == 0 {
+			ref := packet.Metadata().CaptureInfo.Timestamp
+			flushed, closed := assembler.FlushWithOptions(reassembly.FlushOptions{T: ref.Add(-timeout), TC: ref.Add(-closeTimeout)})
+			fmt.Printf(" -- forced flush: %d flushed, %d closed (%s)\n", flushed, closed, ref)
+		}
 
-		var done bool
+		/*
+			if err := parser.DecodeLayers(data, &decoded); err != nil {
+				// Well it sures complaing about not knowing how to decode TCP
+			}
+
+			for _, layerType := range decoded {
+				switch layerType {
+				case layers.LayerTypeIPv6:
+					//fmt.Println("    IP6 ", ip6.SrcIP, ip6.DstIP)
+				case layers.LayerTypeIPv4:
+					//				fmt.Println("    IP4 ", ip4.SrcIP, ip4.DstIP, len(data))
+
+					//ref := packet.Metadata().CaptureInfo.Timestamp
+					//flushed, closed := assembler.FlushWithOptions(reassembly.FlushOptions{T: ref.Add(time.Minute * 30), TC: ref.Add(time.Minute * 5)})
+					//Debug("Forced flush: %d flushed, %d closed (%s)", flushed, closed, ref)
+				}
+			}
+		*/
+
 		select {
 		case <-signalChan:
 			fmt.Fprintf(os.Stderr, "\nCaught SIGINT: aborting\n")
@@ -531,7 +540,6 @@ func main() {
 	// We close the processing queue
 	close(jobQ)
 	w.Wait()
-
 }
 
 // queueSession tries to enqueue the session for output
@@ -547,17 +555,20 @@ func (t *tcpStream) queueSession() bool {
 }
 
 func processCompletedSession(cancelC <-chan string, jobQ <-chan SSHSession, w *sync.WaitGroup) {
+	defer func() {
+		w.Done()
+
+	}()
 	for {
 		select {
 		case m, more := <-jobQ:
 			if more {
 				output(m)
 			} else {
-				w.Done()
 				return
 			}
 		case <-cancelC:
-			w.Done()
+			return
 		}
 	}
 }
