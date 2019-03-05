@@ -34,7 +34,6 @@ var ignorefsmerr = flag.Bool("ignorefsmerr", false, "Ignore TCP FSM errors")
 var verbose = flag.Bool("verbose", false, "Be verbose")
 var debug = flag.Bool("debug", false, "Display debug information")
 var quiet = flag.Bool("quiet", false, "Be quiet regarding errors")
-var partial = flag.Bool("partial", true, "Output partial TLS Sessions, e.g. where we don't see all three of client hello, server hello and certificate")
 
 // capture
 var iface = flag.String("i", "eth0", "Interface to read packets from")
@@ -316,42 +315,6 @@ func (t *tcpStream) ReassembledSG(sg reassembly.ScatterGather, ac reassembly.Ass
 			}
 
 		}
-		/*
-
-				if tls.Handshake != nil {
-
-					// If the timestamp has not been set, we set it for the first time.
-					if t.tlsSession.Record.Timestamp.IsZero() {
-						info := sg.CaptureInfo(0)
-						t.tlsSession.SetTimestamp(info.Timestamp)
-					}
-
-					for _, tlsrecord := range tls.Handshake {
-						switch tlsrecord.ETLSHandshakeMsgType {
-						// Client Hello
-						case 1:
-							t.tlsSession.PopulateClientHello(tlsrecord.ETLSHandshakeClientHello)
-							t.tlsSession.D4Fingerprinting("ja3")
-						// Server Hello
-						case 2:
-							t.tlsSession.PopulateServerHello(tlsrecord.ETLSHandshakeServerHello)
-							t.tlsSession.D4Fingerprinting("ja3s")
-						// Server Certificate
-						case 11:
-							t.tlsSession.PopulateCertificate(tlsrecord.ETLSHandshakeCertificate)
-							t.tlsSession.D4Fingerprinting("tlsh")
-						}
-
-					}
-
-					// If the handshake is considered finished and we have not yet outputted it we ship it to output.
-					if t.tlsSession.HandshakeComplete() && !t.queued {
-						t.queueSession()
-					}
-
-				}
-			}
-		*/
 	}
 
 }
@@ -367,15 +330,7 @@ func getIPPorts(t *tcpStream) (string, string, string, string) {
 }
 
 func (t *tcpStream) ReassemblyComplete(ac reassembly.AssemblerContext) bool {
-	// If the handshakre has not yet been outputted, but there are some information such as
-	// either the client hello or the server hello, we also output a partial.
-	/*	if *partial && !t.queued && t.tlsSession.HandshakeAny() {
-		t.queueSession()
-	}*/
-
-	fmt.Printf("Complete %s\n",
-		t.ident,
-	)
+	// TODO: What about partial sessions?
 
 	// remove connection from the pool
 	return true
@@ -444,7 +399,7 @@ func main() {
 	jobQ = make(chan SSHSession, 4096)
 	cancelC := make(chan string)
 
-	// We start a worker to send the processed TLS connection the outside world
+	// We start a worker to send the processed connection the outside world
 	var w sync.WaitGroup
 	w.Add(1)
 	go processCompletedSession(cancelC, jobQ, &w)
@@ -579,9 +534,8 @@ func main() {
 
 }
 
-// queueSession tries to enqueue the tlsSession for output
+// queueSession tries to enqueue the session for output
 // returns true if it succeeded or false if it failed to publish the
-// tlsSession for output
 func (t *tcpStream) queueSession() bool {
 	t.queued = true
 	select {
@@ -595,9 +549,9 @@ func (t *tcpStream) queueSession() bool {
 func processCompletedSession(cancelC <-chan string, jobQ <-chan SSHSession, w *sync.WaitGroup) {
 	for {
 		select {
-		case tlss, more := <-jobQ:
+		case m, more := <-jobQ:
 			if more {
-				output(tlss)
+				output(m)
 			} else {
 				w.Done()
 				return

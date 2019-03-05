@@ -186,7 +186,6 @@ func (t *ESSH) NextLayerType() gopacket.LayerType {
 	return gopacket.LayerTypeZero
 }
 
-// Payload returns nil, since ETLS encrypted payload is inside ETLSAppDataRecord
 func (s *ESSH) Payload() []byte {
 	return nil
 }
