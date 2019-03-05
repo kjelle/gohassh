@@ -31,7 +31,7 @@ var statsevery = flag.Int("stats", 100000, "Output statistics every N packets")
 var nodefrag = flag.Bool("nodefrag", false, "If true, do not do IPv4 defrag")
 var checksum = flag.Bool("checksum", false, "Check TCP checksum")
 var nooptcheck = flag.Bool("nooptcheck", true, "Do not check TCP options (useful to ignore MSS on captures with TSO)")
-var ignorefsmerr = flag.Bool("ignorefsmerr", false, "Ignore TCP FSM errors")
+var ignorefsmerr = flag.Bool("ignorefsmerr", true, "Ignore TCP FSM errors")
 var verbose = flag.Bool("verbose", false, "Be verbose")
 var debug = flag.Bool("debug", false, "Display debug information")
 var quiet = flag.Bool("quiet", false, "Be quiet regarding errors")
@@ -278,6 +278,10 @@ func (t *tcpStream) ReassembledSG(sg reassembly.ScatterGather, ac reassembly.Ass
 		var decb bool
 		decb = t.sshSession.BannersComplete()
 		ssh := essh.NewESSH(decb)
+
+		if length > 1000 {
+			Debug("Packet content (%d/0x%x)\n%s\n", len(data), len(data), hex.Dump(data))
+		}
 
 		var decoded []gopacket.LayerType
 		p := gopacket.NewDecodingLayerParser(essh.LayerTypeESSH, ssh)
